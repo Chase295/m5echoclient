@@ -1,0 +1,409 @@
+#include "EventManager.h"
+#include "LedManager.h"
+#include "WifiManager.h"
+#include "AudioManager.h"
+#include "WebSocketClient.h"
+#include "PowerManager.h"
+#include "OtaManager.h"
+
+// =============================================================================
+// KONSTRUKTOR & DESTRUKTOR
+// =============================================================================
+
+EventManager::EventManager() {
+    eventQueue = nullptr;
+    eventTaskHandle = nullptr;
+    
+    // Manager-Referenzen initialisieren
+    ledManager = nullptr;
+    wifiManager = nullptr;
+    audioManager = nullptr;
+    webSocketClient = nullptr;
+    powerManager = nullptr;
+    otaManager = nullptr;
+    
+    // Callback-System
+    callbackCount = 0;
+    for (int i = 0; i < 10; i++) {
+        eventCallbacks[i] = nullptr;
+    }
+    
+    debugEnabled = false;
+}
+
+EventManager::~EventManager() {
+    if (eventTaskHandle) {
+        vTaskDelete(eventTaskHandle);
+    }
+    if (eventQueue) {
+        vQueueDelete(eventQueue);
+    }
+}
+
+// =============================================================================
+// INITIALISIERUNG
+// =============================================================================
+
+void EventManager::begin() {
+    Serial.println("EventManager: Initialisiere...");
+    
+    // Event-Queue erstellen
+    eventQueue = xQueueCreate(MANAGER_EVENT_QUEUE_SIZE, sizeof(ManagerEvent));
+    if (!eventQueue) {
+        Serial.println("EventManager: Fehler beim Erstellen der Event-Queue");
+        return;
+    }
+    
+    // Event-Task erstellen
+    BaseType_t result = xTaskCreate(
+        eventTask,
+        "event_task",
+        EVENT_TASK_STACK_SIZE,
+        this,
+        EVENT_TASK_PRIORITY,
+        &eventTaskHandle
+    );
+    
+    if (result != pdPASS) {
+        Serial.println("EventManager: Fehler beim Erstellen der Event-Task");
+        return;
+    }
+    
+    Serial.println("EventManager: Initialisierung abgeschlossen");
+}
+
+void EventManager::update() {
+    // Event-Verarbeitung läuft in separater Task
+    // Hier könnten zusätzliche Update-Logiken implementiert werden
+}
+
+// =============================================================================
+// MANAGER-REGISTRIERUNG
+// =============================================================================
+
+void EventManager::registerLedManager(LedManager* manager) {
+    ledManager = manager;
+    Serial.println("EventManager: LedManager registriert");
+}
+
+void EventManager::registerWifiManager(WifiManager* manager) {
+    wifiManager = manager;
+    Serial.println("EventManager: WifiManager registriert");
+}
+
+void EventManager::registerAudioManager(AudioManager* manager) {
+    audioManager = manager;
+    Serial.println("EventManager: AudioManager registriert");
+}
+
+void EventManager::registerWebSocketClient(WebSocketClient* client) {
+    webSocketClient = client;
+    Serial.println("EventManager: WebSocketClient registriert");
+}
+
+void EventManager::registerPowerManager(PowerManager* manager) {
+    powerManager = manager;
+    Serial.println("EventManager: PowerManager registriert");
+}
+
+void EventManager::registerOtaManager(OtaManager* manager) {
+    otaManager = manager;
+    Serial.println("EventManager: OtaManager registriert");
+}
+
+// =============================================================================
+// EVENT-SENDEN
+// =============================================================================
+
+bool EventManager::sendEvent(ManagerEventType type, uint32_t sourceId, const EventPayload& payload) {
+    if (!eventQueue) {
+        return false;
+    }
+    
+    ManagerEvent event;
+    event.type = type;
+    event.sourceId = sourceId;
+    event.timestamp = millis();
+    event.payload = payload;
+    
+    BaseType_t result = xQueueSend(eventQueue, &event, MANAGER_EVENT_QUEUE_TIMEOUT);
+    
+    if (debugEnabled) {
+        Serial.printf("EventManager: Event gesendet - Typ: %d, Quelle: %d\n", (int)type, sourceId);
+    }
+    
+    return (result == pdPASS);
+}
+
+bool EventManager::sendAudioDataReady(const uint8_t* audioData, size_t dataSize) {
+    if (!audioData || dataSize == 0) {
+        return false;
+    }
+    
+    // Audio-Daten als std::vector<uint8_t> erstellen
+    auto audioPayload = std::make_shared<std::vector<uint8_t>>(audioData, audioData + dataSize);
+    return sendEvent(ManagerEventType::AUDIO_DATA_READY, MANAGER_ID_AUDIO, audioPayload);
+}
+
+bool EventManager::sendLedCommand(const String& command) {
+    // String als std::string erstellen
+    auto commandPayload = std::make_shared<std::string>(command.c_str());
+    return sendEvent(ManagerEventType::LED_COMMAND, MANAGER_ID_WEBSOCKET, commandPayload);
+}
+
+bool EventManager::sendAudioPlayCommand(const uint8_t* audioData, size_t dataSize) {
+    if (!audioData || dataSize == 0) {
+        return false;
+    }
+    
+    // Audio-Daten als std::vector<uint8_t> erstellen
+    auto audioPayload = std::make_shared<std::vector<uint8_t>>(audioData, audioData + dataSize);
+    return sendEvent(ManagerEventType::AUDIO_PLAY_COMMAND, MANAGER_ID_WEBSOCKET, audioPayload);
+}
+
+bool EventManager::sendConfigUpdate(const String& config) {
+    // String als std::string erstellen
+    auto configPayload = std::make_shared<std::string>(config.c_str());
+    return sendEvent(ManagerEventType::CONFIG_UPDATE, MANAGER_ID_WEBSOCKET, configPayload);
+}
+
+bool EventManager::sendOtaCommand(const String& command) {
+    // String als std::string erstellen
+    auto commandPayload = std::make_shared<std::string>(command.c_str());
+    return sendEvent(ManagerEventType::OTA_COMMAND, MANAGER_ID_WEBSOCKET, commandPayload);
+}
+
+bool EventManager::sendPowerCommand(const String& command) {
+    // String als std::string erstellen
+    auto commandPayload = std::make_shared<std::string>(command.c_str());
+    return sendEvent(ManagerEventType::POWER_COMMAND, MANAGER_ID_WEBSOCKET, commandPayload);
+}
+
+bool EventManager::sendButtonPressed() {
+    // Leeres Event ohne Payload
+    auto emptyPayload = std::make_shared<std::string>("");
+    return sendEvent(ManagerEventType::BUTTON_PRESSED, MANAGER_ID_POWER, emptyPayload);
+}
+
+bool EventManager::sendWifiStatusChange(const String& status) {
+    // String als std::string erstellen
+    auto statusPayload = std::make_shared<std::string>(status.c_str());
+    return sendEvent(ManagerEventType::WIFI_STATUS_CHANGE, MANAGER_ID_WIFI, statusPayload);
+}
+
+bool EventManager::sendError(const String& error) {
+    // String als std::string erstellen
+    auto errorPayload = std::make_shared<std::string>(error.c_str());
+    return sendEvent(ManagerEventType::ERROR_OCCURRED, MANAGER_ID_WEBSOCKET, errorPayload);
+}
+
+bool EventManager::sendAudioTest() {
+    // String als std::string erstellen
+    auto testPayload = std::make_shared<std::string>("test");
+    return sendEvent(ManagerEventType::AUDIO_TEST, MANAGER_ID_WIFI, testPayload);
+}
+
+// =============================================================================
+// CALLBACK-REGISTRIERUNG
+// =============================================================================
+
+void EventManager::registerEventCallback(EventCallback callback) {
+    if (callbackCount < 10) {
+        eventCallbacks[callbackCount] = callback;
+        callbackCount++;
+        Serial.println("EventManager: Event-Callback registriert");
+    }
+}
+
+// =============================================================================
+// UTILITY-METHODEN
+// =============================================================================
+
+void EventManager::clearEventQueue() {
+    if (eventQueue) {
+        xQueueReset(eventQueue);
+        Serial.println("EventManager: Event-Queue geleert");
+    }
+}
+
+int EventManager::getEventQueueSize() {
+    if (eventQueue) {
+        return uxQueueMessagesWaiting(eventQueue);
+    }
+    return 0;
+}
+
+bool EventManager::isEventQueueFull() {
+    if (eventQueue) {
+        return (uxQueueSpacesAvailable(eventQueue) == 0);
+    }
+    return true;
+}
+
+// =============================================================================
+// DEBUG-METHODEN
+// =============================================================================
+
+void EventManager::printEventStats() {
+    Serial.printf("EventManager: Queue-Größe: %d/%d, Callbacks: %d\n",
+                  getEventQueueSize(),
+                  MANAGER_EVENT_QUEUE_SIZE,
+                  callbackCount);
+}
+
+void EventManager::enableDebug(bool enabled) {
+    debugEnabled = enabled;
+    Serial.printf("EventManager: Debug %s\n", enabled ? "aktiviert" : "deaktiviert");
+}
+
+// =============================================================================
+// PRIVATE METHODEN
+// =============================================================================
+
+void EventManager::eventTask(void* parameter) {
+    EventManager* manager = static_cast<EventManager*>(parameter);
+    
+    Serial.println("EventManager: Event-Task gestartet");
+    
+    while (true) {
+        ManagerEvent event;
+        
+        // Event aus Queue lesen mit Timeout
+        if (xQueueReceive(manager->eventQueue, &event, pdMS_TO_TICKS(100)) == pdPASS) {
+            manager->processEvent(event);
+        }
+        
+        // Kurze Verzögerung
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+void EventManager::processEvent(const ManagerEvent& event) {
+    if (debugEnabled) {
+        Serial.printf("EventManager: Verarbeite Event - Typ: %d, Quelle: %d\n", (int)event.type, event.sourceId);
+    }
+    
+    // Event-Callbacks aufrufen
+    for (int i = 0; i < callbackCount; i++) {
+        if (eventCallbacks[i]) {
+            eventCallbacks[i](event);
+        }
+    }
+    
+    // Event an entsprechende Manager weiterleiten
+    routeEvent(event);
+    
+    // Keine manuelle Speicherfreigabe mehr nötig - std::shared_ptr macht das automatisch
+}
+
+void EventManager::routeEvent(const ManagerEvent& event) {
+    switch (event.type) {
+        case ManagerEventType::AUDIO_DATA_READY:
+            if (webSocketClient) {
+                // Audio-Daten an WebSocketClient weiterleiten
+                if (auto payload = std::get_if<std::shared_ptr<std::vector<uint8_t>>>(&event.payload)) {
+                    if (*payload && !(*payload)->empty()) {
+                        webSocketClient->sendAudioData((*payload)->data(), (*payload)->size());
+                    }
+                }
+            }
+            break;
+            
+        case ManagerEventType::AUDIO_TEST:
+            if (audioManager) {
+                // Audio-Test an AudioManager weiterleiten
+                audioManager->playTestTone();
+            }
+            break;
+            
+        case ManagerEventType::LED_COMMAND:
+            if (ledManager) {
+                // LED-Befehl an LedManager weiterleiten
+                if (auto payload = std::get_if<std::shared_ptr<std::string>>(&event.payload)) {
+                    if (*payload && !(*payload)->empty()) {
+                        ledManager->processCommand(String((*payload)->c_str()));
+                    }
+                }
+            }
+            break;
+            
+        case ManagerEventType::AUDIO_PLAY_COMMAND:
+            if (audioManager) {
+                // Audio-Wiedergabe an AudioManager weiterleiten
+                if (auto payload = std::get_if<std::shared_ptr<std::vector<uint8_t>>>(&event.payload)) {
+                    if (*payload && !(*payload)->empty()) {
+                        audioManager->playChunk((*payload)->data(), (*payload)->size());
+                    }
+                }
+            }
+            break;
+            
+        case ManagerEventType::CONFIG_UPDATE:
+            if (wifiManager) {
+                // Konfigurationsupdate an WifiManager weiterleiten
+                if (auto payload = std::get_if<std::shared_ptr<std::string>>(&event.payload)) {
+                    if (*payload && !(*payload)->empty()) {
+                        wifiManager->processConfigUpdate(String((*payload)->c_str()));
+                    }
+                }
+            }
+            break;
+            
+        case ManagerEventType::OTA_COMMAND:
+            if (otaManager) {
+                // OTA-Befehl an OtaManager weiterleiten
+                if (auto payload = std::get_if<std::shared_ptr<std::string>>(&event.payload)) {
+                    if (*payload && !(*payload)->empty()) {
+                        otaManager->processOtaCommand(String((*payload)->c_str()));
+                    }
+                }
+            }
+            break;
+            
+        case ManagerEventType::POWER_COMMAND:
+            if (powerManager) {
+                // Power-Befehl an PowerManager weiterleiten
+                if (auto payload = std::get_if<std::shared_ptr<std::string>>(&event.payload)) {
+                    if (*payload && !(*payload)->empty()) {
+                        powerManager->processPowerCommand(String((*payload)->c_str()));
+                    }
+                }
+            }
+            break;
+            
+        case ManagerEventType::BUTTON_PRESSED:
+            // Button-Event an alle Manager weiterleiten
+            if (ledManager) ledManager->setState(LedState::BUTTON_PRESSED);
+            if (powerManager) powerManager->registerButtonActivity();
+            if (audioManager) audioManager->startRecording();
+            break;
+            
+        case ManagerEventType::WIFI_STATUS_CHANGE:
+            // WiFi-Status-Änderung an alle Manager weiterleiten
+            if (ledManager) {
+                if (auto payload = std::get_if<std::shared_ptr<std::string>>(&event.payload)) {
+                    if (*payload && !(*payload)->empty()) {
+                        String status((*payload)->c_str());
+                        if (status == "connected") {
+                            ledManager->setState(LedState::CONNECTED);
+                        } else if (status == "disconnected") {
+                            ledManager->setState(LedState::ERROR);
+                        }
+                    }
+                }
+            }
+            break;
+            
+        case ManagerEventType::ERROR_OCCURRED:
+            // Fehler an alle Manager weiterleiten
+            if (ledManager) ledManager->setState(LedState::ERROR);
+            if (debugEnabled) {
+                if (auto payload = std::get_if<std::shared_ptr<std::string>>(&event.payload)) {
+                    if (*payload && !(*payload)->empty()) {
+                        Serial.printf("EventManager: Fehler empfangen: %s\n", (*payload)->c_str());
+                    }
+                }
+            }
+            break;
+    }
+}
