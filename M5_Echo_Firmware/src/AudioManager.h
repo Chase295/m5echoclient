@@ -67,6 +67,9 @@ private:
     bool isSilenceDetected;
     int silenceThreshold;
     
+    // Lautstärkeregelung
+    float m_volume_gain = 1.0f;
+    
     // FreeRTOS-Tasks und Synchronisation
     TaskHandle_t recordingTaskHandle;
     TaskHandle_t playingTaskHandle;
@@ -158,6 +161,11 @@ public:
     
     // Test-Funktionen
     bool playTestTone();
+    void playTestTone(float volumePercentage = 100.0f);
+    
+    // Lautstärkeregelung
+    void setVolume(float volumePercentage);
+    float getVolume() const;
 };
 
 #endif // AUDIO_MANAGER_H

@@ -865,29 +865,112 @@ bool AudioManager::playChunk(const uint8_t* data, size_t size) {
 }
 
 bool AudioManager::playTestTone() {
-    Serial.println("AudioManager: Spiele Test-Ton ab...");
+    return playTestTone(100.0f);
+}
+
+void AudioManager::playTestTone(float volumePercentage) {
+    Serial.printf("AudioManager: Spiele Test-Ton ab (Lautstärke: %.1f%%)...\n", volumePercentage);
     
-    // Lautsprecher starten falls noch nicht aktiv
-    startSpeaker();
+    // Lautstärke begrenzen
+    if (volumePercentage < 0.0f) volumePercentage = 0.0f;
+    if (volumePercentage > 100.0f) volumePercentage = 100.0f;
     
-    // Test-Ton generieren (einfache Stille)
-    const size_t testToneSize = 1024;
-    uint8_t* testTone = (uint8_t*)malloc(testToneSize);
-    if (!testTone) {
+    // Lautstärke in Verstärkungsfaktor umwandeln (0-100% -> 0.0-4.0)
+    float volumeGain = (volumePercentage / 100.0f) * 4.0f;
+    
+    // Temporäre Lautstärke speichern
+    float originalVolume = m_volume_gain;
+    m_volume_gain = volumeGain;
+    
+    // I2S-Treiber für Lautsprecher initialisieren
+    installI2SDriver(MODE_SPK);
+    enableAmplifier();
+    
+    // Test-Ton-Parameter
+    const float frequency = 1000.0f;  // 1000 Hz
+    const float duration = 1.0f;     // 1 Sekunde
+    const uint32_t sampleRate = 16000; // 16 kHz
+    const size_t bufferSize = 256;    // Puffer-Größe
+    
+    // Berechne die Anzahl der Samples für 1 Sekunde
+    size_t totalSamples = (size_t)(sampleRate * duration);
+    size_t samplesWritten = 0;
+    
+    // Sinuswelle generieren und abspielen
+    int16_t* buffer = (int16_t*)malloc(bufferSize * sizeof(int16_t));
+    if (!buffer) {
         Serial.println("AudioManager: Fehler beim Allozieren des Test-Ton-Buffers");
-        return false;
+        m_volume_gain = originalVolume; // Ursprüngliche Lautstärke wiederherstellen
+        uninstallI2SDriver();
+        disableAmplifier();
+        return;
     }
     
-    // Einfacher Test-Ton (alle Samples auf 0 für Stille)
-    memset(testTone, 0, testToneSize);
-    
-    // Test-Ton in Ring-Puffer schreiben
-    if (xSemaphoreTake(audioMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        updateRingBuffer(speakerBuffer, testTone, testToneSize);
-        xSemaphoreGive(audioMutex);
-        Serial.println("AudioManager: Test-Ton in Ring-Puffer geschrieben");
+    while (samplesWritten < totalSamples) {
+        size_t samplesToGenerate = min(bufferSize, totalSamples - samplesWritten);
+        
+        // Sinuswelle generieren
+        for (size_t i = 0; i < samplesToGenerate; i++) {
+            float time = (float)(samplesWritten + i) / sampleRate;
+            float sineValue = sin(2.0f * PI * frequency * time);
+            
+            // Lautstärke anwenden und in 16-bit Sample konvertieren
+            float amplifiedSample = sineValue * volumeGain * 32767.0f;
+            
+            // Clipping verhindern
+            if (amplifiedSample > 32767.0f) amplifiedSample = 32767.0f;
+            if (amplifiedSample < -32768.0f) amplifiedSample = -32768.0f;
+            
+            buffer[i] = (int16_t)amplifiedSample;
+        }
+        
+        // Buffer an I2S senden
+        size_t bytesWritten = 0;
+        esp_err_t result = i2s_write(SPEAKER_I2S_NUMBER, buffer, 
+                                   samplesToGenerate * sizeof(int16_t), 
+                                   &bytesWritten, pdMS_TO_TICKS(100));
+        
+        if (result != ESP_OK) {
+            Serial.printf("AudioManager: I2S-Schreibfehler: %s\n", esp_err_to_name(result));
+            break;
+        }
+        
+        samplesWritten += samplesToGenerate;
     }
     
-    free(testTone);
-    return true;
+    // Aufräumen
+    free(buffer);
+    
+    // Kurze Pause für sauberen Abschluss
+    vTaskDelay(pdMS_TO_TICKS(100));
+    
+    // I2S-Treiber deinstallieren und Verstärker ausschalten
+    uninstallI2SDriver();
+    disableAmplifier();
+    
+    // Ursprüngliche Lautstärke wiederherstellen
+    m_volume_gain = originalVolume;
+    
+    Serial.println("AudioManager: Test-Ton abgeschlossen");
+}
+
+// =============================================================================
+// LAUTSTÄRKEREGELUNG
+// =============================================================================
+
+void AudioManager::setVolume(float volumePercentage) {
+    // Lautstärke begrenzen
+    if (volumePercentage < 0.0f) volumePercentage = 0.0f;
+    if (volumePercentage > 100.0f) volumePercentage = 100.0f;
+    
+    // Prozentwert in Verstärkungsfaktor umwandeln (0-100% -> 0.0-4.0)
+    m_volume_gain = (volumePercentage / 100.0f) * 4.0f;
+    
+    Serial.printf("AudioManager: Lautstärke auf %.1f%% gesetzt (Gain: %.2f)\n", 
+                  volumePercentage, m_volume_gain);
+}
+
+float AudioManager::getVolume() const {
+    // Verstärkungsfaktor zurück in Prozent umwandeln
+    return (m_volume_gain / 4.0f) * 100.0f;
 }
