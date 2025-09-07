@@ -1,0 +1,96 @@
+#ifndef EVENT_MANAGER_H
+#define EVENT_MANAGER_H
+
+#include <Arduino.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
+#include <variant>
+#include <memory>
+#include <string>
+#include <vector>
+#include "config.h"
+
+// Forward-Deklarationen
+class LedManager;
+class WifiManager;
+class AudioManager;
+class WebSocketClient;
+class PowerManager;
+class OtaManager;
+
+// Event-Callback-Typen
+typedef void (*EventCallback)(const ManagerEvent& event);
+
+class EventManager {
+private:
+    // Event-Queue
+    QueueHandle_t eventQueue;
+    
+    // Manager-Referenzen
+    LedManager* ledManager;
+    WifiManager* wifiManager;
+    AudioManager* audioManager;
+    WebSocketClient* webSocketClient;
+    PowerManager* powerManager;
+    OtaManager* otaManager;
+    
+    // Event-Task
+    TaskHandle_t eventTaskHandle;
+    
+    // Callback-Registrierung
+    EventCallback eventCallbacks[10];
+    int callbackCount;
+    
+    // Private Methoden
+    static void eventTask(void* parameter);
+    void processEvent(const ManagerEvent& event);
+    void routeEvent(const ManagerEvent& event);
+
+public:
+    // Konstruktor & Destruktor
+    EventManager();
+    ~EventManager();
+    
+    // Initialisierung
+    void begin();
+    void update();
+    
+    // Manager-Registrierung
+    void registerLedManager(LedManager* manager);
+    void registerWifiManager(WifiManager* manager);
+    void registerAudioManager(AudioManager* manager);
+    void registerWebSocketClient(WebSocketClient* client);
+    void registerPowerManager(PowerManager* manager);
+    void registerOtaManager(OtaManager* manager);
+    
+    // Event-Senden
+    bool sendEvent(ManagerEventType type, uint32_t sourceId, const uint8_t* data = nullptr, uint32_t dataSize = 0);
+    bool sendAudioDataReady(const uint8_t* audioData, size_t dataSize);
+    bool sendAudioTest();
+    bool sendLedCommand(const String& command);
+    bool sendAudioPlayCommand(const uint8_t* audioData, size_t dataSize);
+    bool sendConfigUpdate(const String& config);
+    bool sendOtaCommand(const String& command);
+    bool sendPowerCommand(const String& command);
+    bool sendButtonPressed();
+    bool sendWifiStatusChange(const String& status);
+    bool sendError(const String& error);
+    
+    // Callback-Registrierung
+    void registerEventCallback(EventCallback callback);
+    
+    // Utility-Methoden
+    void clearEventQueue();
+    int getEventQueueSize();
+    bool isEventQueueFull();
+    
+    // Debug-Methoden
+    void printEventStats();
+    void enableDebug(bool enabled);
+    
+private:
+    bool debugEnabled;
+};
+
+#endif // EVENT_MANAGER_H
