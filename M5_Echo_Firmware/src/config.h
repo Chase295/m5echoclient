@@ -35,9 +35,25 @@
 // I2S-Port-Konfiguration
 #define I2S_MIC_PORT        I2S_NUM_0
 #define I2S_SPEAKER_PORT    I2S_NUM_1
+#define SPEAKER_I2S_NUMBER  I2S_NUM_0  // Beide Modi nutzen I2S_NUM_0
 
 // LAUTSPRECHER-VERSTÄRKER-STEUERUNG (EXKLUSIV)
 #define SPEAKER_ENABLE_PIN   25
+
+// I2S-Modi
+#define MODE_MIC            0
+#define MODE_SPK            1
+
+// Audio-Konfiguration
+#define DATA_SIZE           512
+#define CONFIG_I2S_BCK_PIN  I2S_MIC_BCK_PIN
+#define CONFIG_I2S_LRCK_PIN I2S_MIC_WS_PIN
+#define CONFIG_I2S_DATA_PIN I2S_MIC_DATA_PIN
+#define CONFIG_I2S_DATA_IN_PIN I2S_MIC_DATA_PIN
+
+// Audio-Amplifikation
+#define AUDIO_MAX_SAMPLE    32767
+#define AUDIO_MIN_SAMPLE    -32768
 
 // =============================================================================
 // NETZWERK-KONFIGURATION
